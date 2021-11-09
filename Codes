@@ -1,0 +1,131 @@
+import pandas as pd
+import random
+import numpy as np
+allorders = pd.read_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles/Desktop/Bitirme Projesi/Raw Data/satış fatura analizi/allorders.xlsx")
+forecasts = pd.read_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles/Desktop/Bitirme Projesi/Raw Data/satış fatura analizi/forecast.xlsx")
+firmfinal = pd.read_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles/Desktop/Bitirme Projesi/Raw Data/satış fatura analizi/finalfirm.xlsx") ##gonna take random values. its necessary for city firms.
+km = pd.read_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles/Desktop/Bitirme Projesi/Raw Data/satış fatura analizi/km.xlsx")
+subgroups=[forecasts.columns.values.tolist()]
+regions={'Euro': ['İzmir','Ege'],'Euro XXL': ['İzmir','Ege'],
+        'İzmir Firması': ['İzmir','Ege'],'Elvan': ['Eskişehir','Ege'],
+        'Nestle Çikolata': ['Bursa', 'Ege'], 'Cereal Nesq': ['Bursa', 'Ege'], 'Cereal Nesf': ['Bursa', 'Ege'],
+        'Bakgör 1': ['Bursa', 'Ege'], 'Nestle Kahve': ['Bursa', 'Ege'], 'Nestle Diğer': ['Bursa', 'Ege'],
+        'Kent': ['Kocaeli','Marmara'],'BB': ['Kocaeli','Marmara'],'Tadım': ['Kocaeli','Marmara'],
+        'Perfetti': ['İstanbul','Marmara'],'CV': ['İstanbul', 'Marmara'],'Pamir': ['İstanbul', 'Marmara'],
+        'Şölen İstanbul': ['İstanbul', 'Marmara'],  'Maksi 1': ['İstanbul', 'Marmara'],
+        'Continental': ['İstanbul', 'Marmara'],  'İstanbul Firması': ['İstanbul', 'Marmara'],
+        'Maksi 2': ['İstanbul', 'Marmara'],'Detay': ['İstanbul', 'Marmara'],'Progum': ['Tekirdağ','Marmara'],
+        'Altunsa': ['Gaziantep', 'Güney'],'Şölen Antep': ['Gaziantep', 'Güney'],
+        'Gaziantep Firması': ['Gaziantep', 'Güney'],'Tören': ['Gaziantep', 'Güney'],
+        'Marsa': ['Adana', 'Güney'],'Durum': ['Hatay', 'Güney'],'Neon': ['Mersin','Güney']}
+del subgroups[0][0] ## deletes an unnecessary "unnamed" value
+##LOOP STARTS HERE
+years = [] ## all the calculations below will be a line in this, after a sufficient repeat we will have a pattern.
+for rep in range(400):
+    job=0
+    orders = []
+    for i in subgroups[0]: ##subgroups contains different product families; Nestle Coffee, Nestle Others
+        array=np.array(forecasts[i]) ##takes rows of a given subgroup, which corresponds first 12 ;forecasts from January to December and 12:Mean, 13: Std Dev.
+        month = 1
+        for m in array[0:12]: ##takes only first 12 (monthly forecasts)
+            m=int(round(m+np.random.normal(array[12],array[13])))  ##recalculates forecast depending on error values which are normally distributed, which are derived from error values of the forecast.
+            if m<0: ## there will be no negative orders:) they are small firms which have negative slope.
+                m=0
+            else:
+                m
+            finalfirms = np.array(firmfinal[i]) ##possible final firms for a given subgroup.i.e.: we combined Nestle and Cereal. But we need to differ aggregated City Firms(İstanbul1,İstanbul2,..)
+            finalfirm= random.choice(finalfirms) ##actually it is obvious for most of them but City Firms will be assigned depending on their previous frequency
+            for o in range(m): ##now we have to define size and interval info for each order. Each order enters this for. "o" stands for order.
+                pos = allorders[(allorders.Subgroup == i) & (allorders.Month == month)] ##possible size of a given subgroup in a specific month.
+                if allorders[(allorders.Subgroup == i) & (allorders.Month == month)]["Size"].sum() == 0: ## if the firm has no previous data for that month, it will take one from the rest of the year
+                    amount = random.choice(np.array(allorders[(allorders.Subgroup == i)]["Size"]))
+                else:
+                    if finalfirm=="Nestle":
+                        amount = random.choice(np.array(pos["Size"]))/2 ## Nestle pallets are able to loaded in stack. Therefore two pallets can be regarded as one.
+                    else:
+                        amount = random.choice(np.array(pos["Size"]))
+                job=job+1
+                orders.append(["J{}".format(job),i,finalfirm,regions[i][0],regions[i][1],month,(month-1)*8+random.randint(1,8), amount])
+            month=month+1 ##for overs and we are ready for the next month
+    final=pd.DataFrame(orders)
+    final.columns=["Job No","Group","Firm","City","Region","Month","Interval","Size"]
+    ##final.to_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles\Desktop\Bitirme Projesi\OrdersGenerated.xlsx") ## no need for now
+    final=final.merge(final.groupby(["City","Interval"])["Size"].sum(), on=["City","Interval"], how='left') ##Group sum for the city and interval and then adds the sum to the right hand side
+    final.columns=["Job No","Group","Firm","City","Region","Month","Interval","Size","City Total"]
+    final=final.merge(final.groupby(["Firm","Interval"])["Size"].sum(), on=["Firm","Interval"], how='left') ##Group sum for the firm and interval and then adds the sum to the right hand side
+    final.columns=["Job No","Group","Firm","City","Region","Month","Interval","Size","City Total","Firm Total"]
+    final=final.sort_values(by=["Interval","Region","City Total","City","Firm Total","Firm","Size"],ascending=[True,True,False,False,False,True,False]) ##first interval,then region, then city total..
+    ##final.to_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles\Desktop\Bitirme Projesi\OrdersSorted.xlsx") ## no need for now
+    ## UP TO NOW, WE GENERATE ORDERS AND DEFINE INTERVAL-SIZE INFO. NOW WE ARE HEADED TO ASSIGN TRUCKS FOR ALL THE ORDERS
+    t=1
+    capacity = 0
+    arrangement=[]   ## each assigned order will be added to this.
+    for i in range(1,97):  ##loop for each interval
+        for r in ["Ege","Marmara","Güney"]: ##loop for each region
+            if final[(final.Region == r) & (final.Interval == i)]["Size"].sum() > 0:
+                for index,row in final[(final.Region == r) & (final.Interval == i)].iterrows():
+                    if capacity + row["Size"] <= 33: ##if the next order will exceed the truck limit, it will be loaded to the next truck. BEWARE: If a single order amount exceeds the 33 limit code may break.
+                        capacity = capacity + row["Size"]
+                    else:
+                        capacity=row["Size"]
+                        t=t+1
+                    arrangement.append(["Truck{}".format(t),row["Job No"],row["Firm"],row["City"],row["Region"],row["Size"],row["Interval"]])
+            t=t+1
+            capacity = 0  ## truck capacity is reset
+        t = t + 1
+        capacity = 0 ## truck capacity is reset
+    arr=pd.DataFrame(arrangement)
+    arr.columns=["Truck","Job No","Firm","City","Region","Size","Interval"]
+    ##arr.to_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles\Desktop\Bitirme Projesi\TrucksArranged.xlsx")
+    trucks=arr["Truck"]
+    truck=trucks.drop_duplicates()  ##this and above code are used to loop over all trucks
+    alltrucks=[]  ##statistics for all trucks in a year will be a single line in this table.
+    distance = {'1' : 583,'2' : 733,'3' : 733,'4' : 733,'5' : 387,'6' : 387,'7' : 235,'8' : 345,'9' : 487,'10' : 593,'11' : 593,'12' : 593,'13' : 593,'14' : 477,'15' : 706,
+                '16' : 491,'17' : 675,'18' : 502,'19' : 721,'20' : 690,'21' : 582,'22' : 777,'23' : 808,'24' : 918,'25' : 927,'26' : 817,'27' : 971,'28' : 786,'29' : 980}  ##distance measures for all routes
+    for i in truck:
+        frame=arr[arr["Truck"] == i] ## to simplify the codes
+        numberofcities=frame["City"]
+        numberofcities=len(set(numberofcities)) ##how many cities does the truck visit?
+        numberoffirms=frame["Firm"]
+        numberoffirms=len(set(numberoffirms))  ##how many firms does the truck visit?
+        region=list(set(frame["Region"]))  ##just brings the region where truck is assigned
+        interval=list(set(frame["Interval"]))   ##just brings the interval when the truck is assigned
+        total_size=frame["Size"].sum() ##amount loaded to the truck
+        truckcapacity=0  ##we may add partial trucks
+        if total_size<=18:
+            type="Lorry"
+            truckcapacity = 18
+        else:
+            type="Truck"
+            truckcapacity = 33
+        total_stops = frame["City"]
+        total_stops=set(total_stops)  ## this and above code will be used to determine distance covered by the truck
+        for r in range(29):  ##because there are 29 routes; 7 for Ege, 7 for Marmara, 15 for Güney
+            if set(km.iloc[:,r])==total_stops:
+                d=distance[str(r+1)]
+        alltrucks.append([i,type,total_size,truckcapacity,int(total_size*100/truckcapacity),d,numberofcities,numberoffirms,region[0],interval[0]])
+    alltrucks=pd.DataFrame(alltrucks)
+    alltrucks.columns=["Truck No","Truck Type","Total Size","Truck Capacity","% Fullness","Distance","# of Cities","# of Firms","Region","Interval"]
+    ##alltrucks.to_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles\Desktop\Bitirme Projesi\TruckStatistics.xlsx") ## not necessary now
+    ##NOW WE WILL SUMMARIZE A YEAR IN A SINGLE LINE
+    y_truck_count=len(alltrucks["Truck No"]) ## number of vehicles used.name "truck" maybe confusing but lorry is used for small trucks.
+    y_truck_perL=len(alltrucks[alltrucks["Truck Type"]=="Lorry"])*100/y_truck_count ##percentage of lorries used
+    y_truck_perT=len(alltrucks[alltrucks["Truck Type"]=="Truck"])*100/y_truck_count ##percentage of trucks used
+    y_total_pallet_amount=final["Size"].sum()+final[final["Firm"]=="Nestle"]["Size"].sum()
+    y_avr_distance=int(alltrucks["Distance"].sum()/y_truck_count) ##distance covered by the truck
+    y_city_1=int(len(alltrucks[alltrucks["# of Cities"]==1]["# of Cities"])*100/y_truck_count)
+    y_city_2=int(len(alltrucks[alltrucks["# of Cities"]==2]["# of Cities"])*100/y_truck_count)
+    y_city_3=int(len(alltrucks[alltrucks["# of Cities"]==3]["# of Cities"])*100/y_truck_count)
+    y_city_4=int(len(alltrucks[alltrucks["# of Cities"]==4]["# of Cities"])*100/y_truck_count)
+    y_firm_1=int(len(alltrucks[alltrucks["# of Firms"]==1]["# of Firms"])*100/y_truck_count)
+    y_firm_2=int(len(alltrucks[alltrucks["# of Firms"]==2]["# of Firms"])*100/y_truck_count)
+    y_firm_3=int(len(alltrucks[alltrucks["# of Firms"]==3]["# of Firms"])*100/y_truck_count)
+    y_firm_4=int(len(alltrucks[alltrucks["# of Firms"]==4]["# of Firms"])*100/y_truck_count)
+    y_firm_5=int(len(alltrucks[alltrucks["# of Firms"]==5]["# of Firms"])*100/y_truck_count)
+    y_firm_6=int(len(alltrucks[alltrucks["# of Firms"]==6]["# of Firms"])*100/y_truck_count)
+    y_firm_7u=int(len(alltrucks[alltrucks["# of Firms"]>=7]["# of Firms"])*100/y_truck_count)
+    years.append([y_truck_count,y_truck_perT,y_truck_perL,y_total_pallet_amount,y_avr_distance,y_city_1,y_city_2,y_city_3,y_city_4,y_firm_1,y_firm_2,y_firm_3,y_firm_4,y_firm_5,y_firm_6,y_firm_7u])
+    print("A year simulation number:{}...look familiar? This should also remind you that we may variables in a bigger simulation!".format(rep+1))
+years=pd.DataFrame(years)
+years.columns=["Total Vehicle","%Truck","%Lorry","Pallet Amount","Avr. Distance","1 City%","2 Cities%","3 Cities%","4 Cities%","1 Firm%","2 Firms%","3 Firms%","4 Firms%","5 Firms%","6 Firms%","7 or Higher Firms%"]
+years.to_excel("C:/Users/GunesOnu/OneDrive - Constantia Flexibles\Desktop\Bitirme Projesi\SimulationFinal4.xlsx")
